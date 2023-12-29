@@ -7,6 +7,8 @@ use DTApi\Http\Requests;
 use DTApi\Models\Distance;
 use Illuminate\Http\Request;
 use DTApi\Repository\BookingRepository;
+use app\Models\UserRoles;
+use Illuminate\Support\Facades\Validator;
 
 /**
  * Class BookingController
@@ -40,7 +42,7 @@ class BookingController extends Controller
             $response = $this->repository->getUsersJobs($user_id);
 
         }
-        elseif($request->__authenticatedUser->user_type == env('ADMIN_ROLE_ID') || $request->__authenticatedUser->user_type == env('SUPERADMIN_ROLE_ID'))
+        elseif($request->__authenticatedUser->user_type == UserRoles::ADMIN_ROLE_ID || $request->__authenticatedUser->user_type == UserRoles::SUPERADMIN_ROLE_ID)
         {
             $response = $this->repository->getAll($request);
         }
@@ -63,43 +65,96 @@ class BookingController extends Controller
      * @param Request $request
      * @return mixed
      */
-    public function store(Request $request)
-    {
-        $data = $request->all();
+     public function store(Request $request)
+     {
+     try {
+         $data = $request->all();
+         $authenticatedUser = $request->__authenticatedUser;
 
-        $response = $this->repository->store($request->__authenticatedUser, $data);
+         $response = $this->repository->store($authenticatedUser, $data);
 
-        return response($response);
+         if ($response) {
+             return response($response);
+         } else {
+             return response(['error' => 'Failed to create.'], 500);
+         }
+     } catch (\Exception $e) {
+         // Log the exception for further investigation
+         \Log::error('Error in store method: ' . $e->getMessage());
 
-    }
+         return response(['error' => 'An unexpected error occurred.'], 500);
+     }
+   }
 
     /**
      * @param $id
      * @param Request $request
      * @return mixed
      */
-    public function update($id, Request $request)
-    {
-        $data = $request->all();
-        $cuser = $request->__authenticatedUser;
-        $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $cuser);
+     public function update($id, Request $request)
+     {
+     try {
+         // Verify required data in the request
+         $requiredFields = ['field1', 'field2']; // Add the required field names
+         foreach ($requiredFields as $field) {
+             if (!array_key_exists($field, $request->all())) {
+                 return response(['error' => 'Required field ' . $field . ' is missing.'], 400);
+             }
+         }
 
-        return response($response);
-    }
+         $data = $request->all();
+         $cuser = $request->__authenticatedUser;
+
+         $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $cuser);
+
+         if ($response) {
+             return response($response);
+         } else {
+             return response(['error' => 'Failed to update.'], 500);
+         }
+     } catch (\Exception $e) {
+         // Log the exception for further investigation
+         \Log::error('Error in update method: ' . $e->getMessage());
+
+         return response(['error' => 'An unexpected error occurred.'], 500);
+     }
+   }
 
     /**
      * @param Request $request
      * @return mixed
      */
-    public function immediateJobEmail(Request $request)
-    {
-        $adminSenderEmail = config('app.adminemail');
-        $data = $request->all();
+     public function immediateJobEmail(Request $request)
+     {
+     try {
+         // Validate input data
+         $validator = Validator::make($request->all(), [
+             'key1' => 'required',
+             'key2' => 'required',
+             // Add other validation rules as needed
+         ]);
 
-        $response = $this->repository->storeJobEmail($data);
+         if ($validator->fails()) {
+             return response(['error' => $validator->errors()], 400);
+         }
 
-        return response($response);
-    }
+         $adminSenderEmail = config('app.adminemail');
+         $data = $request->all();
+
+         $response = $this->repository->storeJobEmail($data);
+
+         if ($response) {
+             return response($response);
+         } else {
+             return response(['error' => 'Failed to process job email.'], 500);
+         }
+     } catch (\Exception $e) {
+         // Log the exception for further investigation
+         \Log::error('Error in immediateJobEmail method: ' . $e->getMessage());
+
+         return response(['error' => 'An unexpected error occurred.'], 500);
+     }
+   }
 
     /**
      * @param Request $request
@@ -192,67 +247,61 @@ class BookingController extends Controller
         return response($response);
     }
 
+
     public function distanceFeed(Request $request)
     {
+    try {
+        // Validate input data
+        $validator = Validator::make($request->all(), [
+            'distance' => 'sometimes|required',
+            'time' => 'sometimes|required',
+            'jobid' => 'required',
+            'session_time' => 'sometimes|required',
+            'flagged' => 'required|in:true,false',
+            'manually_handled' => 'required|in:true,false',
+            'by_admin' => 'required|in:true,false',
+            'admincomment' => 'required_if:flagged,true',
+        ]);
+
+        if ($validator->fails()) {
+            return response(['error' => $validator->errors()], 400);
+        }
+
         $data = $request->all();
 
-        if (isset($data['distance']) && $data['distance'] != "") {
-            $distance = $data['distance'];
-        } else {
-            $distance = "";
-        }
-        if (isset($data['time']) && $data['time'] != "") {
-            $time = $data['time'];
-        } else {
-            $time = "";
-        }
-        if (isset($data['jobid']) && $data['jobid'] != "") {
-            $jobid = $data['jobid'];
-        }
+        $distance = $data['distance'] ?? '';
+        $time = $data['time'] ?? '';
+        $jobid = $data['jobid'];
 
-        if (isset($data['session_time']) && $data['session_time'] != "") {
-            $session = $data['session_time'];
-        } else {
-            $session = "";
-        }
+        $session = $data['session_time'] ?? '';
+        $flagged = $data['flagged'] === 'true' ? 'yes' : 'no';
+        $manually_handled = $data['manually_handled'] === 'true' ? 'yes' : 'no';
+        $by_admin = $data['by_admin'] === 'true' ? 'yes' : 'no';
+        $admincomment = $data['admincomment'] ?? '';
 
-        if ($data['flagged'] == 'true') {
-            if($data['admincomment'] == '') return "Please, add comment";
-            $flagged = 'yes';
-        } else {
-            $flagged = 'no';
-        }
-        
-        if ($data['manually_handled'] == 'true') {
-            $manually_handled = 'yes';
-        } else {
-            $manually_handled = 'no';
-        }
-
-        if ($data['by_admin'] == 'true') {
-            $by_admin = 'yes';
-        } else {
-            $by_admin = 'no';
-        }
-
-        if (isset($data['admincomment']) && $data['admincomment'] != "") {
-            $admincomment = $data['admincomment'];
-        } else {
-            $admincomment = "";
-        }
         if ($time || $distance) {
-
-            $affectedRows = Distance::where('job_id', '=', $jobid)->update(array('distance' => $distance, 'time' => $time));
+            Distance::where('job_id', '=', $jobid)->update(['distance' => $distance, 'time' => $time]);
         }
 
         if ($admincomment || $session || $flagged || $manually_handled || $by_admin) {
-
-            $affectedRows1 = Job::where('id', '=', $jobid)->update(array('admin_comments' => $admincomment, 'flagged' => $flagged, 'session_time' => $session, 'manually_handled' => $manually_handled, 'by_admin' => $by_admin));
-
+            Job::where('id', '=', $jobid)->update([
+                'admin_comments' => $admincomment,
+                'flagged' => $flagged,
+                'session_time' => $session,
+                'manually_handled' => $manually_handled,
+                'by_admin' => $by_admin,
+            ]);
         }
 
         return response('Record updated!');
+      } catch (\Exception $e) {
+        // Log the exception for further investigation
+        \Log::error('Error in distanceFeed method: ' . $e->getMessage());
+
+        return response(['error' => 'An unexpected error occurred.'], 500);
+      }
     }
+
 
     public function reopen(Request $request)
     {
